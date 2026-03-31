@@ -28,6 +28,37 @@ import pandas as pd
 from datetime import datetime
 import streamlit as st
 
+def access_gate():
+    PASSWORD = st.secrets["APP_PASSWORD"]
+    allowed_emails = set([e.lower().strip() for e in st.secrets["ALLOWED_EMAILS"]])
+
+    if "authed" not in st.session_state:
+        st.session_state.authed = False
+
+    st.sidebar.markdown("## 🔒 Giriş")
+    email = st.sidebar.text_input("E-posta").lower().strip()
+
+    if not email:
+        st.stop()
+
+    if email not in allowed_emails:
+        st.error("Bu e-posta için erişim yok.")
+        st.stop()
+
+    if not st.session_state.authed:
+        pwd = st.sidebar.text_input("Şifre", type="password")
+        if not pwd:
+            st.stop()
+
+        if pwd != PASSWORD:
+            st.error("Şifre yanlış.")
+            st.stop()
+
+        st.session_state.authed = True
+        st.sidebar.success("Giriş başarılı ✅")
+
+access_gate()
+
 today = datetime.today().strftime("%Y-%m-%d")
 
 # ==== Dosya adları ====
@@ -534,42 +565,6 @@ def simulate_machine_slot_schedule(plan_sorted: pd.DataFrame, prod_to_machines: 
     schedule_rows = []
     product_first_day_master_idx = {}
     product_last_day_master_idx = {}
-    day_hammadde_owner = {d: {} for d in days_union}  # gün -> hammadde -> makine
-    raw_material_block_warnings = set()
-
-    def _clean_hammadde(value) -> str:
-        if pd.isna(value):
-            return ""
-        return str(value).strip()
-
-    def _raw_material_conflicts(day: str, machine: str, pcode: str) -> bool:
-        prow = row_by_code.get(pcode)
-        if prow is None:
-            return False
-        hm = _clean_hammadde(prow.get("Hammadde Kodu", ""))
-        if not hm:
-            return False
-        owner = day_hammadde_owner.setdefault(day, {}).get(hm)
-        return owner is not None and owner != machine
-
-    def _reserve_raw_material(day: str, machine: str, pcode: str):
-        prow = row_by_code.get(pcode)
-        if prow is None:
-            return
-        hm = _clean_hammadde(prow.get("Hammadde Kodu", ""))
-        if hm:
-            day_hammadde_owner.setdefault(day, {}).setdefault(hm, machine)
-
-    def _remember_raw_material_warning(day: str, machine: str, pcode: str):
-        prow = row_by_code.get(pcode)
-        if prow is None:
-            return
-        hm = _clean_hammadde(prow.get("Hammadde Kodu", ""))
-        owner = day_hammadde_owner.setdefault(day, {}).get(hm)
-        if hm and owner and owner != machine:
-            raw_material_block_warnings.add(
-                f"{day}: {pcode} ({machine}) planlanamadı; {hm} hammaddesi aynı gün {owner} üzerinde zaten kullanılıyor."
-            )
 
     for day in days_union:
         for machine in machines_union:
@@ -586,10 +581,6 @@ def simulate_machine_slot_schedule(plan_sorted: pd.DataFrame, prod_to_machines: 
                     queue[machine].pop(0)
                     continue
 
-                if _raw_material_conflicts(day, machine, pcode):
-                    _remember_raw_material_warning(day, machine, pcode)
-                    break
-
                 assign = left if left < cap_rem else cap_rem
                 prow = row_by_code.get(pcode)
                 if prow is None:
@@ -597,7 +588,6 @@ def simulate_machine_slot_schedule(plan_sorted: pd.DataFrame, prod_to_machines: 
                     queue[machine].pop(0)
                     continue
 
-                _reserve_raw_material(day, machine, pcode)
                 schedule_rows.append({
                     "Gün": day,
                     "Makine": machine,
@@ -633,17 +623,12 @@ def simulate_machine_slot_schedule(plan_sorted: pd.DataFrame, prod_to_machines: 
                     queue[machine].pop(0)
                     continue
 
-                if _raw_material_conflicts(day, machine, pcode):
-                    _remember_raw_material_warning(day, machine, pcode)
-                    break
-
                 assign = left if left < cap_rem else cap_rem
                 prow = row_by_code.get(pcode)
                 if prow is None:
                     queue[machine].pop(0)
                     continue
 
-                _reserve_raw_material(day, machine, pcode)
                 schedule_rows.append({
                     "Gün": day,
                     "Makine": machine,
@@ -691,8 +676,6 @@ def simulate_machine_slot_schedule(plan_sorted: pd.DataFrame, prod_to_machines: 
                 "Sebep": "Vardiya/gün/makine kapasitesi yetersiz (ürün bitirilemedi)",
             })
             warnings.append(f"{pcode} için {leftover} adet sığmadı.")
-
-    warnings.extend(sorted(raw_material_block_warnings))
 
     return schedule_rows, unassigned, warnings, product_first_day_master_idx, product_last_day_master_idx
 
