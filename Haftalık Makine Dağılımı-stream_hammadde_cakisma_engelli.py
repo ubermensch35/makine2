@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 Haftalık Makine Dağılımı (GÜNLÜK KAPASİTE, 1+2. VARDİYA) - STREAMLIT REVİZE v4
@@ -987,27 +988,62 @@ if st is not None:
         except Exception:
             sku_options = []
 
-    st.header("2️⃣ Öncelikli SKU Seçimi")
-    st.caption("Seçtiğin SKU'lar plan sırasının en başına alınır (sonra Üretim Planı büyükten küçüğe).")
-    priority_skus_ui = st.multiselect(
-        "Öncelikli SKU'lar",
-        options=sku_options,
-        default=[],
-        help="Üretimde önce görmek istediğin SKU'ları seç."
+    st.header("2️⃣ Öncelikli SKU Sıralaması")
+    st.caption(
+        "Öncelik sırası garanti olsun diye multiselect yerine sıralı seçim kullanılır. "
+        "1. Öncelik en önce planlanır; aynı makinede ürün bitmeden sıradaki öncelikli SKU başlamaz."
     )
 
-    # ✅ Seçim sırasını koru (1-seçilen, 2-seçilen, ...)
-    if "priority_sku_order" not in st.session_state:
-        st.session_state["priority_sku_order"] = []
+    if "priority_sku_count" not in st.session_state:
+        st.session_state["priority_sku_count"] = 0
 
-    current_sel = [str(x).strip() for x in (priority_skus_ui or []) if str(x).strip()]
-    prev_order = [str(x).strip() for x in (st.session_state["priority_sku_order"] or []) if str(x).strip()]
+    max_priority_count = min(30, len(sku_options)) if sku_options else 0
 
-    # listeden çıkarılanları sil
-    prev_order = [x for x in prev_order if x in current_sel]
-    # yeni eklenenleri, UI'dan gelen sıraya göre ekle
-    newly_added = [x for x in current_sel if x not in prev_order]
-    st.session_state["priority_sku_order"] = prev_order + newly_added
+    priority_count_ui = st.number_input(
+        "Kaç SKU önceliklendirilecek?",
+        min_value=0,
+        max_value=max_priority_count,
+        value=min(int(st.session_state.get("priority_sku_count", 0)), max_priority_count),
+        step=1,
+        help="Örneğin A, B, C sırasıyla öncelikliyse 3 seç; aşağıda 1-2-3 diye sırala."
+    )
+    st.session_state["priority_sku_count"] = int(priority_count_ui)
+
+    priority_order_ui = []
+
+    for i in range(int(priority_count_ui)):
+        # Önceden seçilenleri tekrar seçtirmiyoruz; böylece aynı SKU iki kez girilemez.
+        available_options = [""] + [sku for sku in sku_options if sku not in priority_order_ui]
+
+        previous_value = st.session_state.get(f"priority_rank_{i}", "")
+        if previous_value and previous_value not in available_options:
+            available_options.insert(1, previous_value)
+
+        selected = st.selectbox(
+            f"{i + 1}. Öncelik SKU",
+            options=available_options,
+            key=f"priority_rank_{i}",
+            help="Bu sıradaki SKU, kendisinden sonraki öncelikli SKU'lardan önce makine kuyruğuna girer."
+        )
+
+        selected = str(selected).strip()
+        if selected:
+            priority_order_ui.append(selected)
+
+    # Boş seçimleri ve tekrarları temizle, sırayı aynen koru.
+    cleaned_priority_order = []
+    seen_priority = set()
+    for sku in priority_order_ui:
+        sku = str(sku).strip()
+        if sku and sku not in seen_priority:
+            cleaned_priority_order.append(sku)
+            seen_priority.add(sku)
+
+    st.session_state["priority_sku_order"] = cleaned_priority_order
+
+    if cleaned_priority_order:
+        st.info("Öncelik sırası: " + " → ".join(cleaned_priority_order))
+
     st.markdown("---")
 
     # ===== 1. Vardiya Seçimleri =====
