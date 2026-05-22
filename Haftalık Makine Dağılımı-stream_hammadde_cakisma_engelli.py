@@ -649,7 +649,102 @@ def simulate_machine_slot_schedule(plan_sorted: pd.DataFrame, prod_to_machines: 
 
             if produced_any:
                 day_second_shift_machines[day].add(machine)
+ # ---------- 3.5) RESCUE PASS ----------
+    # Amaç:
+    # Eğer ürün seçilen makinede sığmadıysa ama alternatif uygun makinede boş kapasite varsa,
+    # kalan miktarı oraya yerleştir.
+    # Normal çalışan planı bozmaz. Sadece leftover rescue yapar.
 
+    used_shift1 = {m: {d: 0 for d in days_union} for m in machines_union}
+
+    for row in schedule_rows:
+        if str(row.get("Not", "")).strip() == "2.VARDIYA":
+            continue
+
+        d = row["Gün"]
+        m = row["Makine"]
+        q = int(row["Adet"])
+
+        used_shift1[m][d] += q
+
+    for _, r in plan_sorted.iterrows():
+
+        pcode = str(r["Ürün Kodu"]).strip()
+        leftover = int(remaining_qty.get(pcode, 0))
+
+        if leftover <= 0:
+            continue
+
+        eligible_machines = [
+            m for m in prod_to_machines.get(pcode, [])
+            if m in SHIFT1_MACHINES
+        ]
+
+        if not eligible_machines:
+            continue
+
+        rescued_any = False
+
+        for day in days_union:
+
+            if leftover <= 0:
+                break
+
+            if day not in SHIFT1_DAYS:
+                continue
+
+            for machine in eligible_machines:
+
+                if leftover <= 0:
+                    break
+
+                cap1 = int(CAPACITIES_SHIFT1.get(machine, 0))
+                used1 = int(used_shift1.get(machine, {}).get(day, 0))
+
+                free1 = cap1 - used1
+
+                if free1 <= 0:
+                    continue
+
+                # HM conflict engeli
+                hm_conflict = False
+
+                for existing in schedule_rows:
+                    if (
+                        existing["Gün"] == day
+                        and str(existing["Hammadde Kodu"]).strip() == str(r["Hammadde Kodu"]).strip()
+                        and str(existing["Ürün Kodu"]).strip() != pcode
+                    ):
+                        hm_conflict = True
+                        break
+
+                if hm_conflict:
+                    continue
+
+                assign = min(leftover, free1)
+
+                schedule_rows.append({
+                    "Gün": day,
+                    "Makine": machine,
+                    "Ürün Kodu": pcode,
+                    "Ürün Adı": r["Ürün Adı"],
+                    "Tür": r["Tür"],
+                    "Hammadde Kodu": r["Hammadde Kodu"],
+                    "Adet": int(assign),
+                    "Not": "",
+                })
+
+                used_shift1[machine][day] += assign
+                remaining_qty[pcode] -= assign
+                leftover -= assign
+                rescued_any = True
+
+                mi = MASTER_DAY_INDEX.get(day, 0)
+
+                if pcode not in product_first_day_master_idx:
+                    product_first_day_master_idx[pcode] = mi
+
+                product_last_day_master_idx[pcode] = mi
     # ---------- 4) Unassigned & warnings ----------
     unassigned = []
     warnings = []
