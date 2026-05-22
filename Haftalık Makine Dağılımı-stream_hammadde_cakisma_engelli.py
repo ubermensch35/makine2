@@ -649,13 +649,13 @@ def simulate_machine_slot_schedule(plan_sorted: pd.DataFrame, prod_to_machines: 
 
             if produced_any:
                 day_second_shift_machines[day].add(machine)
- # ---------- 3.5) RESCUE PASS ----------
+ # ---------- 3.5) RESCUE PASS - TEK ÜRÜN TEK MAKİNE KORUMALI ----------
     # Amaç:
-    # Eğer ürün seçilen makinede sığmadıysa ama alternatif uygun makinede boş kapasite varsa,
-    # kalan miktarı oraya yerleştir.
-    # Normal çalışan planı bozmaz. Sadece leftover rescue yapar.
+    # Kalan ürünleri boş kapasiteye kurtarır.
+    # Ancak aynı ürünü ikinci bir makineye bölmez.
 
     used_shift1 = {m: {d: 0 for d in days_union} for m in machines_union}
+    product_used_machines = {}
 
     for row in schedule_rows:
         if str(row.get("Not", "")).strip() == "2.VARDIYA":
@@ -663,9 +663,14 @@ def simulate_machine_slot_schedule(plan_sorted: pd.DataFrame, prod_to_machines: 
 
         d = row["Gün"]
         m = row["Makine"]
+        pcode_row = str(row["Ürün Kodu"]).strip()
         q = int(row["Adet"])
 
         used_shift1[m][d] += q
+
+        if pcode_row not in product_used_machines:
+            product_used_machines[pcode_row] = set()
+        product_used_machines[pcode_row].add(m)
 
     for _, r in plan_sorted.iterrows():
 
@@ -675,15 +680,17 @@ def simulate_machine_slot_schedule(plan_sorted: pd.DataFrame, prod_to_machines: 
         if leftover <= 0:
             continue
 
-        eligible_machines = [
-            m for m in prod_to_machines.get(pcode, [])
-            if m in SHIFT1_MACHINES
-        ]
+        # Ürün daha önce bir makinede üretildiyse sadece o makinede devam edebilir
+        if pcode in product_used_machines and product_used_machines[pcode]:
+            eligible_machines = list(product_used_machines[pcode])
+        else:
+            eligible_machines = [
+                m for m in prod_to_machines.get(pcode, [])
+                if m in SHIFT1_MACHINES
+            ]
 
         if not eligible_machines:
             continue
-
-        rescued_any = False
 
         for day in days_union:
 
@@ -700,15 +707,13 @@ def simulate_machine_slot_schedule(plan_sorted: pd.DataFrame, prod_to_machines: 
 
                 cap1 = int(CAPACITIES_SHIFT1.get(machine, 0))
                 used1 = int(used_shift1.get(machine, {}).get(day, 0))
-
                 free1 = cap1 - used1
 
                 if free1 <= 0:
                     continue
 
-                # HM conflict engeli
+                # Hammadde çakışması kontrolü
                 hm_conflict = False
-
                 for existing in schedule_rows:
                     if (
                         existing["Gün"] == day
@@ -737,7 +742,6 @@ def simulate_machine_slot_schedule(plan_sorted: pd.DataFrame, prod_to_machines: 
                 used_shift1[machine][day] += assign
                 remaining_qty[pcode] -= assign
                 leftover -= assign
-                rescued_any = True
 
                 mi = MASTER_DAY_INDEX.get(day, 0)
 
